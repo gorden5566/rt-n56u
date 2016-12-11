@@ -12,7 +12,7 @@ before_install:
     - sudo apt-get install -y autoconf automake bison build-essential flex gawk gettext gperf libtool pkg-config zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev texinfo python-docutils mc
 
 before_script:
-    - sudo mkdir -p /opt/rt-n56u/toolchain-mipsel/
+    - sudo mkdir -p /opt/rt-n56u/
     - sudo cp -r ./toolchain-mipsel/ /opt/rt-n56u/toolchain-mipsel/
     - ls /opt/rt-n56u -R
     - cd /opt/rt-n56u/toolchain-mipsel && sudo sh ./clean_sources && sudo sh ./build_toolchain
