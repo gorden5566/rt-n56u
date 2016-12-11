@@ -1,0 +1,18 @@
+sudo: required
+
+language: c
+
+compiler:
+    - gcc
+
+before_install:
+    - sudo apt-get -qq update
+    - sudo apt-get install -y autoconf automake bison build-essential flex gawk gettext gperf libtool pkg-config zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev texinfo python-docutils mc
+
+before_script:
+    - sudo cp -r toolchain-mipsel/ /opt/rt-n56u/
+    - cd /opt/rt-n56u/toolchain-mipsel && sudo ./clean_sources && sudo ./build_toolchain
+    - cd /opt/rt-n56u/toolchain-mipsel && sudo chmod u+x ./toolchain-3.4.x/bin/*
+
+script:
+    - cd ./trunk && sudo ./clear_tree && sudo ./build_firmware
