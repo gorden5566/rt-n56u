@@ -1384,6 +1384,11 @@ int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 
 	if (usb_endpoint_xfer_isoc(&urb->ep->desc))
 		size = urb->number_of_packets;
+	else if (usb_endpoint_is_bulk_out(&urb->ep->desc) &&
+	    urb->transfer_buffer_length > 0 &&
+	    urb->transfer_flags & URB_ZERO_PACKET &&
+	    !(urb->transfer_buffer_length % usb_endpoint_maxp(&urb->ep->desc)))
+		size = 2;
 	else
 		size = 1;
 
@@ -1874,12 +1879,11 @@ int xhci_add_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 	else
 		ep_type = USB_EP_CONTROL;
 
+	maxp = GET_MAX_PACKET(usb_endpoint_maxp(&ep->desc));
 	if (udev->speed == USB_SPEED_FULL || udev->speed == USB_SPEED_HIGH || udev->speed == USB_SPEED_LOW) {
-		maxp = ep->desc.wMaxPacketSize & 0x7FF;
-		burst = ep->desc.wMaxPacketSize >> 11;
+		burst = (usb_endpoint_maxp(&ep->desc) & 0x1800) >> 11;
 		mult = 0;
 	} else if (udev->speed == USB_SPEED_SUPER) {
-		maxp = ep->desc.wMaxPacketSize & 0x7FF;
 		burst = ep->ss_ep_comp.bMaxBurst;
 		mult = ep->ss_ep_comp.bmAttributes & 0x3;
 	}

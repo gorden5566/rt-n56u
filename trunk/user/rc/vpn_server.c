@@ -57,7 +57,6 @@ gen_vpns_pppd_options(int vpns_type)
 	if (!(fp = fopen(vpns_opt, "w")))
 		return -1;
 
-	fprintf(fp, "lock\n");
 	fprintf(fp, "name %s\n", get_our_hostname());
 	fprintf(fp, "auth\n");
 	fprintf(fp, "refuse-eap\n");
@@ -423,6 +422,8 @@ ipup_vpns_main(int argc, char **argv)
 
 	/* add route to client's LAN */
 	vpns_route_to_remote_lan(peer_name, argv[1], NULL, 1);
+
+	set_vpn_balancing(argv[1], 1);
 
 	fp = fopen(VPN_SERVER_LEASE_FILE, "a+");
 	if (fp) {

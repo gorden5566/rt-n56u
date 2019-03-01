@@ -384,7 +384,7 @@ try_again:
 
 	if (copied < ulen
 #if defined (CONFIG_INET_UDPLITE)
-	    || UDP_SKB_CB(skb)->partial_cov
+	    || (is_udplite && UDP_SKB_CB(skb)->partial_cov)
 #endif
 	    ) {
 		checksum_valid = !udp_lib_checksum_complete(skb);
@@ -430,7 +430,7 @@ try_again:
 		else {
 			sin6->sin6_addr = ipv6_hdr(skb)->saddr;
 			if (ipv6_addr_type(&sin6->sin6_addr) & IPV6_ADDR_LINKLOCAL)
-				sin6->sin6_scope_id = IP6CB(skb)->iif;
+				sin6->sin6_scope_id = inet6_iif(skb);
 		}
 		*addr_len = sizeof(*sin6);
 	}
@@ -1347,6 +1347,7 @@ static struct sk_buff *udp6_ufo_fragment(struct sk_buff *skb,
 	u8 frag_hdr_sz = sizeof(struct frag_hdr);
 	int offset;
 	__wsum csum;
+	int err;
 
 	mss = skb_shinfo(skb)->gso_size;
 	if (unlikely(skb->len <= mss))
@@ -1387,7 +1388,10 @@ static struct sk_buff *udp6_ufo_fragment(struct sk_buff *skb,
 	/* Find the unfragmentable header and shift it left by frag_hdr_sz
 	 * bytes to insert fragment header.
 	 */
-	unfrag_ip6hlen = ip6_find_1stfragopt(skb, &prevhdr);
+	err = ip6_find_1stfragopt(skb, &prevhdr);
+	if (err < 0)
+		return ERR_PTR(err);
+	unfrag_ip6hlen = err;
 	nexthdr = *prevhdr;
 	*prevhdr = NEXTHDR_FRAGMENT;
 	unfrag_len = skb_network_header(skb) - skb_mac_header(skb) +

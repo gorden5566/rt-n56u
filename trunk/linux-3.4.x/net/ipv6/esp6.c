@@ -43,7 +43,7 @@
 #include <net/protocol.h>
 #include <linux/icmpv6.h>
 
-#if IS_ENABLED(CONFIG_RALINK_HWCRYPTO)
+#if defined(CONFIG_RALINK_HWCRYPTO_ESP6)
 #include "../xfrm/xfrm_hwcrypto.h"
 #else
 
@@ -411,7 +411,7 @@ out:
 	return ret;
 }
 
-#endif /* CONFIG_RALINK_HWCRYPTO */
+#endif /* CONFIG_RALINK_HWCRYPTO_ESP6 */
 
 static u32 esp6_get_mtu(struct xfrm_state *x, int mtu)
 {
@@ -614,13 +614,12 @@ static int esp6_init_state(struct xfrm_state *x)
 			x->props.header_len += IPV4_BEET_PHMAXLEN +
 				               (sizeof(struct ipv6hdr) - sizeof(struct iphdr));
 		break;
+	default:
 	case XFRM_MODE_TRANSPORT:
 		break;
 	case XFRM_MODE_TUNNEL:
 		x->props.header_len += sizeof(struct ipv6hdr);
 		break;
-	default:
-		goto error;
 	}
 
 	align = ALIGN(crypto_aead_blocksize(aead), 4);
@@ -641,7 +640,7 @@ static const struct xfrm_type esp6_type =
 	.init_state	= esp6_init_state,
 	.destructor	= esp6_destroy,
 	.get_mtu	= esp6_get_mtu,
-#if IS_ENABLED(CONFIG_RALINK_HWCRYPTO)
+#if defined(CONFIG_RALINK_HWCRYPTO_ESP6)
 	.input		= ipsec_esp6_input,
 	.output		= ipsec_esp6_output,
 #else

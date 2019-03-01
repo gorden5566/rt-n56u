@@ -1,8 +1,8 @@
 /*
   Mode switching tool for controlling mode of 'multi-state' USB devices
-  Version 2.4.0, 2016/06/12
+  Version 2.5.2, 2017/12/31
 
-  Copyright (C) 2007 - 2016 Josua Dietze (mail to "usb_admin" at the domain
+  Copyright (C) 2007 - 2017 Josua Dietze (mail to "usb_admin" at the domain
   of the home page; or write a personal message through the forum to "Josh".
   NO SUPPORT VIA E-MAIL - please use the forum for that)
 
@@ -45,7 +45,7 @@
 
 /* Recommended tab size: 4 */
 
-#define VERSION "2.4.0"
+#define VERSION "2.5.2"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -139,6 +139,7 @@ unsigned int ModeMap = 0;
 #define PANTECH_MODE		0x00001000
 #define HUAWEINEW_MODE		0x00002000
 #define OPTION_MODE			0x00004000
+#define HUAWEIALT_MODE		0x00008000
 
 
 int PantechMode=0;
@@ -158,7 +159,7 @@ char **Messages = NULL;
 FILE *output;
 
 
-/* Settable Interface and Configuration (for debugging mostly) (jmw) */
+/* Settable interface, altsetting (for debugging mostly) and configuration */
 int Interface = -1, Configuration = 0, AltSetting = -1;
 
 
@@ -181,6 +182,7 @@ static struct option long_options[] = {
 	{"detach-only",			no_argument, 0, 'd'},
 	{"huawei-mode",			no_argument, 0, 'H'},
 	{"huawei-new-mode",		no_argument, 0, 'J'},
+	{"huawei-alt-mode",		no_argument, 0, 'X'},
 	{"sierra-mode",			no_argument, 0, 'S'},
 	{"sony-mode",			no_argument, 0, 'O'},
 	{"qisda-mode",			no_argument, 0, 'B'},
@@ -223,6 +225,7 @@ void readConfigFile(const char *configFilename)
 	ParseParamBoolMap(configFilename, DetachStorageOnly, ModeMap, DETACHONLY_MODE);
 	ParseParamBoolMap(configFilename, HuaweiMode, ModeMap, HUAWEI_MODE);
 	ParseParamBoolMap(configFilename, HuaweiNewMode, ModeMap, HUAWEINEW_MODE);
+	ParseParamBoolMap(configFilename, HuaweiAltMode, ModeMap, HUAWEIALT_MODE);
 	ParseParamBoolMap(configFilename, SierraMode, ModeMap, SIERRA_MODE);
 	ParseParamBoolMap(configFilename, SonyMode, ModeMap, SONY_MODE);
 	ParseParamBoolMap(configFilename, GCTMode, ModeMap, GCT_MODE);
@@ -284,6 +287,8 @@ void printConfig()
 		fprintf (output,"HuaweiMode=1\n");
 	if (ModeMap & HUAWEINEW_MODE)
 		fprintf (output,"HuaweiNewMode=1\n");
+	if (ModeMap & HUAWEIALT_MODE)
+		fprintf (output,"HuaweiAltMode=1\n");
 	if (ModeMap & SIERRA_MODE)
 		fprintf (output,"SierraMode=1\n");
 	if (ModeMap & SONY_MODE)
@@ -346,7 +351,7 @@ int readArguments(int argc, char **argv)
 
 	while (1)
 	{
-		c = getopt_long (argc, argv, "hejWQDndKHJSOBEGTNALZUF:RItv:p:V:P:C:m:M:2:3:w:r:c:i:u:a:s:f:b:g:",
+		c = getopt_long (argc, argv, "hejWQDndKHJSOBEGTNALZUXF:RItv:p:V:P:C:m:M:2:3:w:r:c:i:u:a:s:f:b:g:",
 					long_options, &option_index);
 
 		/* Detect the end of the options. */
@@ -372,6 +377,7 @@ int readArguments(int argc, char **argv)
 			case 'd': ModeMap = ModeMap + DETACHONLY_MODE; break;
 			case 'H': ModeMap = ModeMap + HUAWEI_MODE; break;
 			case 'J': ModeMap = ModeMap + HUAWEINEW_MODE; break;
+			case 'X': ModeMap = ModeMap + HUAWEIALT_MODE; break;
 			case 'S': ModeMap = ModeMap + SIERRA_MODE; break;
 			case 'O': ModeMap = ModeMap + SONY_MODE; break;
 			case 'B': ModeMap = ModeMap + QISDA_MODE; break;
@@ -432,7 +438,7 @@ int readArguments(int argc, char **argv)
 int main(int argc, char **argv)
 {
 	int ret=0, numDefaults=0, sonySuccess=0, i;
-	int currentConfigVal=0, defaultClass=0, interfaceClass=0;
+	int defaultClass=0, interfaceClass=0, currentConfigVal=0;
 	struct libusb_device_descriptor descriptor;
 	enum libusb_error libusbError;
 
@@ -476,11 +482,11 @@ int main(int argc, char **argv)
 
 	if (strlen(MessageContent)) {
 		if (strlen(MessageContent) % 2 != 0) {
-			fprintf(stderr, "Error: MessageContent hex string has uneven length. Abort\n\n");
+			fprintf(stderr, "MessageContent hex string has uneven length. Abort\n\n");
 			exit(1);
 		}
 		if ( hexstr2bin(MessageContent, ByteString, strlen(MessageContent)/2) == -1) {
-			fprintf(stderr, "Error: MessageContent %s\n is not a hex string. Abort\n\n",
+			fprintf(stderr, "MessageContent %s\n is not a hex string. Abort\n\n",
 					MessageContent);
 
 			exit(1);
@@ -582,9 +588,37 @@ int main(int argc, char **argv)
 	/* Get class of default device/interface */
 	interfaceClass = get_interface_class();
 
+	if (interfaceClass == -1) {
+		fprintf(stderr, "Error: Could not get class of interface %d. Does it exist? Abort\n\n",Interface);
+		abortExit();
+	} else {
+		SHOW_PROGRESS(output," with class %d\n", interfaceClass);
+	}
+
+	if (defaultClass == 0 || defaultClass == 0xef)
+		defaultClass = interfaceClass;
+	else
+		if (interfaceClass == LIBUSB_CLASS_MASS_STORAGE && defaultClass != LIBUSB_CLASS_MASS_STORAGE
+				&& defaultClass != LIBUSB_CLASS_VENDOR_SPEC) {
+
+			/* Unexpected default class combined with differing interface class */
+			SHOW_PROGRESS(output,"Bogus Class/InterfaceClass: 0x%02x/0x08\n", defaultClass);
+			defaultClass = 8;
+		}
+
+	if ((strlen(MessageContent) && strncmp("55534243",MessageContent,8) == 0)
+			|| StandardEject || ModeMap & HUAWEINEW_MODE || ModeMap & HUAWEIALT_MODE
+			|| ModeMap & CISCO_MODE || ModeMap & OPTION_MODE)
+		if (defaultClass != 8) {
+			fprintf(stderr, "Error: can't use storage command in MessageContent with interface %d; "
+				"interface class is %d, expected 8. Abort\n\n", Interface, defaultClass);
+			abortExit();
+		}
+
 	/* Check or get endpoints and alloc message list if needed*/
 	if (strlen(MessageContent) || StandardEject || InquireDevice || ModeMap & CISCO_MODE
-				|| ModeMap & HUAWEINEW_MODE || ModeMap & OPTION_MODE) {
+				|| ModeMap & HUAWEINEW_MODE || ModeMap & HUAWEIALT_MODE
+				|| ModeMap & OPTION_MODE) {
 
 		Messages = (char**) calloc(MSG_DIM, sizeof(char*));
 		for (i = 0; i < MSG_DIM; i++) {
@@ -609,40 +643,17 @@ int main(int argc, char **argv)
 
 	}
 
-	if (interfaceClass == -1) {
-		fprintf(stderr, "Error: Could not get class of interface %d. Does it exist? Abort\n\n",Interface);
-		abortExit();
-	}
-
-	if (defaultClass == 0 || defaultClass == 0xef)
-		defaultClass = interfaceClass;
-	else
-		if (interfaceClass == LIBUSB_CLASS_MASS_STORAGE && defaultClass != LIBUSB_CLASS_MASS_STORAGE
-				&& defaultClass != LIBUSB_CLASS_VENDOR_SPEC) {
-
-			/* Unexpected default class combined with differing interface class */
-			SHOW_PROGRESS(output,"Bogus Class/InterfaceClass: 0x%02x/0x08\n", defaultClass);
-			defaultClass = 8;
-		}
-
-	if (strlen(MessageContent) && strncmp("55534243",MessageContent,8) == 0)
-		if (defaultClass != 8) {
-			fprintf(stderr, "Error: can't use storage command in MessageContent with interface %d;\n"
-				"       interface class is %d, expected 8. Abort\n\n", Interface, defaultClass);
-			abortExit();
-		}
-
 	if (InquireDevice) {
 		if (defaultClass == 0x08) {
 			SHOW_PROGRESS(output,"Inquire device details; driver will be detached ...\n");
-			detachDriver();
+			detachDrivers();
 			InquireDevice = 2;
 			deviceInquire();
 		} else
 			SHOW_PROGRESS(output,"Not a storage device, skip SCSI inquiry\n");
 	}
 
-	if (show_progress) {
+	if (verbose) {
 		fprintf(output,"\nUSB description data (for identification)\n");
 		deviceDescription();
 	}
@@ -683,7 +694,7 @@ int main(int argc, char **argv)
 		if (InquireDevice == 2) {
 			SHOW_PROGRESS(output," Any driver was already detached for inquiry. Do nothing\n");
 		} else {
-			ret = detachDriver();
+			ret = detachDrivers();
 			if (ret == 2)
 				SHOW_PROGRESS(output," You may want to remove the storage driver manually\n");
 		}
@@ -696,14 +707,14 @@ int main(int argc, char **argv)
 		switchSierraMode();
 	}
 	if(ModeMap & GCT_MODE) {
-		detachDriver();
+		detachDrivers();
 		switchGCTMode();
 	}
 	if(ModeMap & QISDA_MODE) {
 		switchQisdaMode();
 	}
 	if(ModeMap & KOBIL_MODE) {
-		detachDriver();
+		detachDrivers();
 		switchKobilMode();
 	}
 	if(ModeMap & QUANTA_MODE) {
@@ -716,15 +727,15 @@ int main(int argc, char **argv)
 		switchActionMode();
 	}
 	if(ModeMap & CISCO_MODE) {
-		detachDriver();
+		detachDrivers();
 		switchCiscoMode();
 	}
 	if(ModeMap & BLACKBERRY_MODE) {
-		detachDriver();
+		detachDrivers();
 		switchBlackberryMode();
 	}
 	if(ModeMap & PANTECH_MODE) {
-		detachDriver();
+		detachDrivers();
 		if (PantechMode > 1)
 			switchPantechMode();
 		else
@@ -739,7 +750,7 @@ int main(int argc, char **argv)
 
 	if (StandardEject) {
 		SHOW_PROGRESS(output,"Sending standard EJECT sequence\n");
-		detachDriver();
+		detachDrivers();
 
 		strcpy(Messages[0],"5553424387654321000000000000061e000000000000000000000000000000");
 		strcpy(Messages[1],"5553424397654321000000000000061b000000020000000000000000000000");
@@ -751,18 +762,26 @@ int main(int argc, char **argv)
 		switchSendMessage();
 	} else if (ModeMap & HUAWEINEW_MODE) {
 		SHOW_PROGRESS(output,"Using standard Huawei switching message\n");
-		detachDriver();
+		detachDrivers();
 		strcpy(Messages[0],"55534243123456780000000000000011062000000101000100000000000000");
+		switchSendMessage();
+	} else if (ModeMap & HUAWEIALT_MODE) {
+		SHOW_PROGRESS(output,"Using alternative Huawei switching message\n");
+		detachDrivers();
+		strcpy(Messages[0],"55534243123456780000000000000011063000000000010000000000000000");
 		switchSendMessage();
 	} else if (ModeMap & OPTION_MODE) {
 		SHOW_PROGRESS(output,"Using standard Option switching message\n");
-		detachDriver();
-//		strcpy(MessageContent,"55534243123456780100000080000601000000000000000000000000000000");
+		detachDrivers();
 		strcpy(Messages[0],"55534243123456780000000000000601000000000000000000000000000000");
 		switchSendMessage();
 	} else if (strlen(MessageContent)) {
-		detachDriver();
+		detachDrivers();
 		strcpy(Messages[0],MessageContent);
+		if (MessageContent2[0] != '\0')
+			strcpy(Messages[1], MessageContent2);
+		if (MessageContent3[0] != '\0')
+			strcpy(Messages[2], MessageContent3);
 		switchSendMessage();
 	}
 
@@ -777,7 +796,9 @@ int main(int argc, char **argv)
 				}
 			}
 		} else {
-			SHOW_PROGRESS(output,"Target configuration %d found. Do nothing\n", currentConfigVal);
+			SHOW_PROGRESS(output,"Target configuration %d already active. Nothing to do. Bye!\n\n", currentConfigVal);
+			close_all();
+			exit(0);
 		}
 	}
 
@@ -1056,6 +1077,7 @@ int switchSendMessage ()
 {
 	const char* cmdHead = "55534243";
 	int ret, i;
+	int retries = 1;
 /*	char* msg[3];
 	msg[0] = MessageContent;
 	msg[1] = MessageContent2;
@@ -1069,11 +1091,12 @@ int switchSendMessage ()
 			return 0;
 		}
 	}
-	libusb_clear_halt(devh, MessageEndpoint);
+
 	SHOW_PROGRESS(output,"Use endpoint 0x%02x for message sending ...\n", MessageEndpoint);
 	if (show_progress)
 		fflush(stdout);
 
+retry:
 	for (i=0; i<MSG_DIM; i++) {
 		if ( strlen(Messages[i]) == 0)
 			break;
@@ -1085,14 +1108,20 @@ int switchSendMessage ()
 			// UFI command
 			SHOW_PROGRESS(output,"Read the response to message %d (CSW) ...\n", i+1);
 			ret = read_bulk(ResponseEndpoint, ByteString, 13);
-			if (ret >= 0)
+			if (ret >= 0) {
 				SHOW_PROGRESS(output,", status %d",ByteString[12]);
-		} else {
+			}
+		} /* else {
 			// Other bulk transfer
 			SHOW_PROGRESS(output,"Read the response to message %d ...\n", i+1);
 			ret = read_bulk(ResponseEndpoint, ByteString, strlen(Messages[i])/2 );
-		}
+		}*/
 		SHOW_PROGRESS(output,"\n");
+		if (ret == LIBUSB_TRANSFER_STALL && retries--) {
+			SHOW_PROGRESS(output,"Endpoint stalled. Resetting ...\n");
+			libusb_clear_halt(devh, MessageEndpoint);
+			goto retry;
+		}
 		if (ret < 0)
 			goto skip;
 	}
@@ -1126,14 +1155,18 @@ skip:
 
 int switchConfiguration ()
 {
-	int ret, count = SWITCH_CONFIG_MAXTRIES;
+	int ret;
 
 	SHOW_PROGRESS(output,"Change configuration to %i ...\n", Configuration);
-	while (((ret = libusb_set_configuration(devh, Configuration)) < 0) && --count) {
-		SHOW_PROGRESS(output," Device is busy, try to detach kernel driver\n");
-		detachDriver();
+	detachDrivers();
+	ret = libusb_set_configuration(devh, -1);
+	if (ret < 0) {
+		SHOW_PROGRESS(output," Resetting the configuration failed (error %d). Try to continue\n", ret);
 	}
-	if (ret < 0 ) {
+	/* Empirically tested wait period, improves reliability of configuration change */
+	usleep(100000);
+	ret = libusb_set_configuration(devh, Configuration);
+	if (ret < 0) {
 		SHOW_PROGRESS(output," Changing the configuration failed (error %d). Try to continue\n", ret);
 		return 0;
 	} else {
@@ -1304,7 +1337,7 @@ void switchPantechMode()
 #define MOBILE_ACTION_READLOOP2 73
 
 /* The code here is statically derived from sniffing (and confirmed working).
- * However I bet it could be simplified significantly.
+ * However, I bet it could be simplified significantly.
  */
 
 void switchActionMode ()
@@ -1403,7 +1436,6 @@ void switchCiscoMode()
 		SHOW_PROGRESS(output," Could not claim interface (error %d). Abort\n", ret);
 		abortExit();
 	}
-//	libusb_clear_halt(devh, MessageEndpoint);
 	if (show_progress)
 		fflush(output);
 
@@ -1448,7 +1480,7 @@ skip:
 int switchSonyMode ()
 {
 	int ret, i, found;
-	detachDriver();
+	detachDrivers();
 
 	if (CheckSuccess) {
 		CheckSuccess = 0;
@@ -1515,38 +1547,45 @@ int switchSonyMode ()
 
 /* Detach driver
  */
-int detachDriver()
+int detachDrivers()
 {
-	int ret;
+	int i, ret;
 
 	// Driver already detached during SCSI inquiry ?
 	if (InquireDevice == 2)
 		return 1;
 
-	SHOW_PROGRESS(output,"Looking for active driver ...\n");
+	SHOW_PROGRESS(output,"Looking for active drivers ...\n");
 	ret = libusb_kernel_driver_active(devh, 0);
 	if (ret == LIBUSB_ERROR_NOT_SUPPORTED) {
 		fprintf(output," Can't do driver detection on this platform.\n");
 		return 2;
 	}
-	if (ret < 0) {
-		fprintf(output," Driver check failed with error %d. Try to continue\n", ret);
-		return 2;
-	}
-	if (ret == 0) {
-		SHOW_PROGRESS(output," No active driver found. Detached before or never attached\n");
-		return 1;
-	}
 
-	ret = libusb_detach_kernel_driver(devh, Interface);
-	if (ret == LIBUSB_ERROR_NOT_SUPPORTED) {
-		fprintf(output," Can't do driver detaching on this platform.\n");
-		return 2;
+	struct libusb_config_descriptor *config;
+	libusb_get_active_config_descriptor(dev, &config);
+
+	for (i=0; i<config->bNumInterfaces; i++) {
+		ret = libusb_kernel_driver_active(devh, i);
+		if (ret < 0) {
+			SHOW_PROGRESS(output," Failed to check driver status for interface %d (error %d)\n Try to continue\n",i,ret);
+			continue;
+		}
+		if (ret) {
+			ret = libusb_detach_kernel_driver(devh, i);
+			if (ret == LIBUSB_ERROR_NOT_SUPPORTED) {
+				fprintf(output," Can't do driver detaching on this platform.\n");
+				return 2;
+			}
+			if (ret == 0) {
+				SHOW_PROGRESS(output," OK, driver detached\n");
+			} else {
+				SHOW_PROGRESS(output," Driver detach failed for interface %d (error %d).\n Try to continue\n",i,ret);
+				continue;
+			}
+		}
 	}
-	if (ret == 0) {
-		SHOW_PROGRESS(output," OK, driver detached\n");
-	} else
-		SHOW_PROGRESS(output," Driver detach failed (error %d). Try to continue\n", ret);
+	libusb_free_config_descriptor(config);
 	return 1;
 }
 
@@ -1632,6 +1671,7 @@ int checkSuccess()
 		 * Target device on the same bus with higher device number is returned,
 		 * description is read for syslog message
 		 */
+		// Wait counter passed on from previous loop
 		for (i=i; i < CheckSuccess; i++) {
 			SHOW_PROGRESS(output," Search for target devices ...\n");
 			dev = search_devices(&newTargetCount, TargetVendor, TargetProductList,
@@ -1670,12 +1710,6 @@ int checkSuccess()
 		}
 
 	switch (success) {
-		case 3: 
-			if (sysmode)
-				syslog(LOG_NOTICE, "switched to new device, but hit libusb1 bug");
-			TargetProduct = -1;
-			success = 1;
-			break;
 		case 2: 
 			if (sysmode)
 				syslog(LOG_NOTICE, "switched to %04x:%04x on %03d/%03d", TargetVendor,
@@ -1708,7 +1742,6 @@ int write_bulk(int endpoint, unsigned char *message, int length)
 		} else
 			SHOW_PROGRESS(output," Sending the message returned error %d. Try to continue\n", ret);
 	return ret;
-
 }
 
 
@@ -1723,7 +1756,6 @@ int read_bulk(int endpoint, unsigned char *buffer, int length)
 		} else
 			SHOW_PROGRESS(output," Response reading failed (error %d)", ret);
 	return ret;
-
 }
 
 
@@ -1734,7 +1766,6 @@ void release_usb_device(int __attribute__((unused)) dummy)
 		libusb_release_interface(devh, Interface);
 	close_all();
 	exit(0);
-
 }
 
 
@@ -1748,7 +1779,6 @@ struct libusb_device* search_devices( int *numFound, int vendor, char* productLi
 	unsigned char buffer[2];
 	int devClass, product;
 	struct libusb_device* right_dev = NULL;
-//	struct libusb_device_handle *testdevh;
 	struct libusb_device **devs;
 	int i=0;
 
@@ -1760,7 +1790,7 @@ struct libusb_device* search_devices( int *numFound, int vendor, char* productLi
 	*numFound = 0;
 
 	/* Sanity check */
-	if (!vendor || productList == '\0')
+	if (!vendor || *productList == '\0')
 		return NULL;
 
 	listcopy = malloc(strlen(productList)+1);
@@ -1810,10 +1840,11 @@ struct libusb_device* search_devices( int *numFound, int vendor, char* productLi
 			product <<= 8;
 			product += (unsigned char)buffer[1];
 			if (product == descriptor.idProduct) {
-				SHOW_PROGRESS(output,"   product ID matched\n");
+				if (verbose)
+					fprintf(output,"   product ID matched\n");
 
 				if (targetClass != 0) {
-					// TargetClass is set, check class of first interface
+					/* TargetClass is set, check class of first interface */
 					struct libusb_device_descriptor descriptor;
 					libusb_get_device_descriptor(dev, &descriptor);
 					devClass = descriptor.bDeviceClass;
@@ -1848,23 +1879,8 @@ struct libusb_device* search_devices( int *numFound, int vendor, char* productLi
 								fprintf (output,"   count device\n");
 						}
 					}
-				} else if (configuration > 0) {
-					// Configuration parameter is set, check device configuration
-					int testconfig = get_current_config_value(dev);
-					if (testconfig != configuration) {
-						if (verbose)
-							fprintf (output,"   device configuration %d not matching target\n",
-									testconfig);
-
-						(*numFound)++;
-						right_dev = dev;
-						if (verbose)
-							fprintf (output,"   count device\n");
-					} else
-						if (verbose)
-							fprintf (output,"   device not counted, target configuration reached\n");
 				} else {
-					// Neither TargetClass nor Configuration are set
+					/* Neither TargetClass nor Configuration are set */
 					(*numFound)++;
 					right_dev = dev;
 					if (mode == SEARCH_BUSDEV)
@@ -1944,7 +1960,8 @@ char* ReadParseParam(const char* FileName, char *VariableName)
 	char *FirstQuote, *LastQuote, *P1, *P2;
 	int Line=0;
 	unsigned Len=0, Pos=0;
-	char Str[LINE_DIM], *token, *configPos;
+	static char Str[LINE_DIM];
+	char *token, *configPos;
 	FILE *file = NULL;
 
 	// Reading and storing input during the first call
@@ -1971,7 +1988,6 @@ char* ReadParseParam(const char* FileName, char *VariableName)
 			}
 		}
 		while (token != NULL && numLines < MAXLINES) {
-//			Line++;
 			Len=strlen(Str);
 			if (Len==0)
 				goto NextLine;
@@ -2109,7 +2125,8 @@ void close_all()
 		libusb_free_config_descriptor(active_config);
 	if (devh)
 		libusb_close(devh);
-	libusb_exit(ctx);
+	if (ctx)
+		libusb_exit(ctx);
 	if (sysmode)
 		closelog();
 }
@@ -2117,6 +2134,8 @@ void close_all()
 
 void abortExit()
 {
+	fflush(output);
+	fflush(stderr);
 	close_all();
 	exit(1);
 }
@@ -2126,7 +2145,7 @@ void printVersion()
 {
 	char* version = VERSION;
 	fprintf(output,"\n * usb_modeswitch: handle USB devices with multiple modes\n"
-		" * Version %s (C) Josua Dietze 2016\n"
+		" * Version %s (C) Josua Dietze 2017\n"
 		" * Based on libusb1/libusbx\n\n"
 		" ! PLEASE REPORT NEW CONFIGURATIONS !\n\n", version);
 }
@@ -2147,7 +2166,8 @@ void printHelp()
 	" -g, --device-num NUM          system device number (for hard ID)\n"
 	" -m, --message-endpoint NUM    direct the message transfer there (optional)\n"
 	" -M, --message-content <msg>   message to send (hex number as string)\n"
-	" -2 <msg>, -3 <msg>            additional messages to send (-n recommended)\n"
+	" -2, --message-content2 <msg>  additional messages to send (-n recommended)\n"
+	" -3, --message-content3 <msg>  additional messages to send (-n recommended)\n"
 	" -w, --release-delay NUM       wait NUM ms before releasing the interface\n"
 	" -n, --need-response           obsolete, no effect (always on)\n"
 	" -r, --response-endpoint NUM   read response from there (optional)\n"
@@ -2155,6 +2175,7 @@ void printHelp()
 	" -d, --detach-only             detach the active driver, no further action\n"
 	" -H, --huawei-mode             apply a special procedure\n"
 	" -J, --huawei-new-mode         apply a special procedure\n"
+	" -X, --huawei-alt-mode         apply a special procedure\n"
 	" -S, --sierra-mode             apply a special procedure\n"
 	" -O, --sony-mode               apply a special procedure\n"
 	" -G, --gct-mode                apply a special procedure\n"
@@ -2171,7 +2192,7 @@ void printHelp()
 	" -Q, --quiet                   don't show progress or error messages\n"
 	" -W, --verbose                 print all settings and debug output\n"
 	" -D, --sysmode                 specific result and syslog message\n"
-	" -s, --success <seconds>       switching result check with timeout\n"
+	" -s, --check-success <seconds> switching result check with timeout\n"
 	" -I, --inquire                 retrieve SCSI attributes initially\n\n"
 	" -c, --config-file <filename>  load long configuration from file\n\n"
 	" -t, --stdinput                read long configuration from stdin\n\n"

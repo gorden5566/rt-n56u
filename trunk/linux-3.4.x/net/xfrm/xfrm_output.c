@@ -23,6 +23,10 @@
 #include "../nat/hw_nat/ra_nat.h"
 #endif
 
+#if IS_ENABLED(CONFIG_RALINK_HWCRYPTO)
+#include "xfrm_hwcrypto.h"
+#endif
+
 static int xfrm_output2(struct sk_buff *skb);
 
 #if IS_ENABLED(CONFIG_RALINK_HWCRYPTO)
@@ -45,7 +49,7 @@ static int xfrm_skb_check_space(struct sk_buff *skb)
 
 	return pskb_expand_head(skb, nhead, ntail, GFP_ATOMIC);
 }
-#if IS_ENABLED(CONFIG_RALINK_HWCRYPTO)
+#if defined(CONFIG_RALINK_HWCRYPTO_MODULE)
 EXPORT_SYMBOL(xfrm_skb_check_space);
 #endif
 
