@@ -15,8 +15,8 @@ before_script:
     - sudo mkdir -p /opt/rt-n56u/
     - sudo mv ./toolchain-mipsel/ /opt/rt-n56u/
     - ls /opt/rt-n56u -R
-    - cd /opt/rt-n56u/toolchain-mipsel && sudo sh ./clean_sources && sudo sh ./build_toolchain
+    - cd /opt/rt-n56u/toolchain-mipsel && sudo sh ./clean_sources && sudo sh ./build_toolchain >/dev/null 2>&1
     - cd /opt/rt-n56u/toolchain-mipsel && sudo chmod u+x ./toolchain-3.4.x/bin/*
 
 script:
-    - cd ./trunk && sudo sh ./clear_tree && sudo sh ./build_firmware
+    - cd ./trunk && sudo sh ./clear_tree && sudo sh ./build_firmware >/dev/null 2>&1
